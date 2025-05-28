@@ -2,11 +2,12 @@
 {
     internal class Program
     {
-        static void Main(string[] args)
+        static async Task Main(string[] args)
         {
             try
             {
-                //new SpirePdfTest().Run();
+                new GPSTest().Run();
+                //await new SpirePdfTest().Run();
                 //new OpenXmlTest().Run();
                 //new TestWord2().Run();
 
