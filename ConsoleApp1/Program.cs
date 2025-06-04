@@ -6,8 +6,8 @@
         {
             try
             {
-                new GPSTest().Run();
-                //await new SpirePdfTest().Run();
+                //new GPSTest().Run();
+                await new SpirePdfTest().Run();
                 //new OpenXmlTest().Run();
                 //new TestWord2().Run();
 

@@ -19,6 +19,7 @@
     <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.5" />
     <PackageReference Include="ClosedXML" Version="0.104.2" />
     <PackageReference Include="FreeSql.Provider.Sqlite" Version="3.5.205" />
+    <PackageReference Include="Polly" Version="8.5.2" />
     <PackageReference Include="ProjNET4GeoAPI" Version="1.4.1" />
   </ItemGroup>
 </Project>

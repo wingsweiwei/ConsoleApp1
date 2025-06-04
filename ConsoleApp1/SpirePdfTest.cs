@@ -1,7 +1,9 @@
-﻿using Spire.Pdf;
+﻿using Polly;
+using Spire.Pdf;
 using Spire.Pdf.Utilities;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -12,6 +14,7 @@ namespace ConsoleApp1
     {
         public async Task Run()
         {
+            var sw = Stopwatch.StartNew();
             // https://www.slope.landsd.gov.hk/smris/map#
 
             string[] urls =
@@ -26,6 +29,8 @@ namespace ConsoleApp1
                 "https://www.slope.landsd.gov.hk/smris/generateSlopeReportBySlopeNo?sn=11SW-C/FR43&sd=&extent=831063.4638845304,814065.6713130291,831360.5531154696,814326.9306869708&imageWidth=898&imageHeight=700&lang=en&keyword=11SW-C/FR43",
                 "https://www.slope.landsd.gov.hk/smris/generateSlopeReportBySlopeNo?sn=11SW-C/FR164&sd=&extent=831285.0111922651,814144.5476565144,831433.5558077347,814275.1773434852&imageWidth=898&imageHeight=700&lang=en&keyword=11SW-C/FR164",
                 "https://www.slope.landsd.gov.hk/smris/generateSlopeReportBySlopeNo?sn=11SW-C/C502&sd=&extent=831430.4206952475,814234.1222990087,831578.9653107171,814364.7519859794&imageWidth=898&imageHeight=700&lang=en&keyword=11SW-C/C502",
+
+                "https://www.slope.landsd.gov.hk/smris/generateSlopeReportBySlopeNo?sn=11SE-B/CR569&sd=&extent=842658.9746922652,814961.6736565146,842807.5193077348,815092.3033434853&imageWidth=898&imageHeight=700&lang=en&keyword=11SE-B/CR569",
 
                 "https://www.slope.landsd.gov.hk/smris/generateSlopeReportBySlopeNo?sn=15NE-A/F63&sd=&extent=838865.6256922652,809626.4436565151,839014.1703077349,809757.0733434858&imageWidth=898&imageHeight=700&lang=en&keyword=15NE-A/F63",
                 "https://www.slope.landsd.gov.hk/smris/generateSlopeReportBySlopeNo?sn=11SW-D/C865&sd=&extent=836182.6776922649,812062.8221565138,836331.2223077345,812193.4518434845&imageWidth=898&imageHeight=700&lang=en&keyword=11SW-D/C865",
@@ -52,105 +57,71 @@ namespace ConsoleApp1
                 "https://www.slope.landsd.gov.hk/smris/generateSlopeReportBySlopeNo?sn=15NE-C/C201&sd=&extent=840076.7757046507,807344.8952674259,840225.3203201203,807475.5249543966&imageWidth=898&imageHeight=700&lang=en&keyword=15NE-C/C201",
             ];
             string folder = @"C:\Work\SlopeInspectionWebApi\SlopeInspectionWebApi\Resources";
-            var tasks = new List<Func<Task>>();
-            foreach (var url in urls)
-            {
-                tasks.Add(async () =>
-                {
-                    for (int i = 0; i < 3; i++)
+            var random = new Random();
+            using var client = new HttpClient();
+            var retryPolicy = Policy
+                .Handle<Exception>()
+                .WaitAndRetryAsync(
+                    3,
+                    _ => TimeSpan.FromMilliseconds(random.Next(1000, 3000)),
+                    (exception, retryDelay) =>
                     {
-                        try
-                        {
-                            await Extract(folder, url);
-                            break;
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine(ex.Message);
-                        }
-                    }
-                });
-            }
-            await Task.WhenAll(tasks.Select(t => t()));
+                        Console.WriteLine(exception.Message);
+                    });
+            var tasks = urls.Select(async url =>
+            {
+                await Task.Delay(random.Next(0, 1000));
+                await retryPolicy.ExecuteAsync(async () => await Extract(client, folder, url));
+            });
+            await Task.WhenAll(tasks);
+            Console.WriteLine($"Done in {sw.Elapsed.TotalSeconds}s.");
         }
 
-        private static async Task Extract(string folder, string url)
+        private static async Task Extract(HttpClient client, string folder, string url)
         {
             var uri = new Uri(url);
-            string[] query = uri.Query.TrimStart('?').Split('&');
-            string sn = query.FirstOrDefault(q => q.StartsWith("sn="))?.Split('=')[1]!;
-            string extent = query.FirstOrDefault(q => q.StartsWith("extent="))?.Split('=')[1]!;
+            var queries = uri.Query.TrimStart('?').Split('&').Select(q => q.Split('=')).ToDictionary(q => q[0], q => q[1]);
+            string sn = queries["sn"];
+            string extent = queries["extent"];
             string filePath = Path.Combine(folder, sn.Replace("-", "_").Replace("/", "_") + ".pdf");
             string fileFolder = Path.Combine(folder, Path.GetFileNameWithoutExtension(filePath));
-            Directory.CreateDirectory(fileFolder);
-            Console.WriteLine("Loading PDF from {0}...", sn);
-            using var pdf = new PdfDocument();
-            using var client = new HttpClient();
-            var bytes = await client.GetByteArrayAsync(url);
-            pdf.LoadFromBytes(bytes);
-            var imageHelper = new PdfImageHelper();
-            for (int i = 0; i < pdf.Pages.Count; i++)
+            try
             {
-                var page = pdf.Pages[i];
-                var imageInfos = imageHelper.GetImagesInfo(page);
-                for (int j = 0; j < imageInfos.Length; j++)
-                {
-                    string fileName = $"Page{i + 1}-Image{j + 1}.png";
-                    string imagePath = Path.Combine(fileFolder, fileName);
-                    if (!File.Exists(imagePath))
-                    {
-                        using var fileStream = new FileStream(imagePath, FileMode.Create);
-                        imageInfos[j].Image.CopyTo(fileStream);
-                    }
-                }
-            }
-            // Save the PDF document
-            pdf.SaveToFile(filePath);
-            // Save the extent
-            string extentPath = Path.Combine(fileFolder, "extent.txt");
-            if (!File.Exists(extentPath))
-            {
-                File.WriteAllText(extentPath, extent);
-            }
-        }
-
-        public void Run2()
-        {
-            // https://www.slope.landsd.gov.hk/smris/map#
-            string folder = @"C:\Work\SlopeInspectionWebApi\SlopeInspectionWebApi\Resources";
-            foreach (var file in Directory.GetFiles(folder, "*.pdf"))
-            {
-                string fileFolder = Path.Combine(folder, Path.GetFileNameWithoutExtension(file));
-                if (Directory.Exists(fileFolder))
-                {
-                    continue;
-                }
                 Directory.CreateDirectory(fileFolder);
-                // 创建PdfDocument实例
-                using PdfDocument pdf = new PdfDocument();
-
-                // 载入PDF文档
-                pdf.LoadFromFile(file);
-
-                // 创建PdfImageHelper对象
-                PdfImageHelper imageHelper = new PdfImageHelper();
-
-                // 遍历PDF文档中的页面
+                Console.WriteLine($"Loading PDF from {sn}...");
+                var bytes = await client.GetByteArrayAsync(url);
+                Console.WriteLine($"Extracting from {sn}...");
+                using var pdf = new PdfDocument(bytes);
+                var imageHelper = new PdfImageHelper();
                 for (int i = 0; i < pdf.Pages.Count; i++)
                 {
-                    // 获取当前页面
-                    PdfPageBase page = pdf.Pages[i];
-                    // 获取当前页面的图片信息
-                    PdfImageInfo[] imageInfos = imageHelper.GetImagesInfo(page);
-                    // 遍历页面中的图片
+                    var page = pdf.Pages[i];
+                    var imageInfos = imageHelper.GetImagesInfo(page);
                     for (int j = 0; j < imageInfos.Length; j++)
                     {
-                        // 保存当前图片
                         string fileName = $"Page{i + 1}-Image{j + 1}.png";
-                        using var fileStream = new FileStream(Path.Combine(fileFolder, fileName), FileMode.Create);
-                        imageInfos[j].Image.CopyTo(fileStream);
+                        string imagePath = Path.Combine(fileFolder, fileName);
+                        if (!File.Exists(imagePath))
+                        {
+                            using var fileStream = new FileStream(imagePath, FileMode.Create);
+                            await imageInfos[j].Image.CopyToAsync(fileStream);
+                        }
                     }
                 }
+                // Save the PDF document
+                pdf.SaveToFile(filePath);
+                // Save the extent
+                string extentPath = Path.Combine(fileFolder, "extent.txt");
+                if (!File.Exists(extentPath))
+                {
+                    await File.WriteAllTextAsync(extentPath, extent);
+                }
+                Console.WriteLine($"Extracted {sn} complete.");
+            }
+            catch (Exception)
+            {
+                Console.WriteLine($"Failed to extract from {sn}");
+                throw;
             }
         }
     }
